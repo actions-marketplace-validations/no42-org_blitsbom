@@ -11,7 +11,7 @@
 # linux/arm64 build.
 
 # Stage 1 — build the static bundle.
-FROM node:26-alpine@sha256:e88a35be04478413b7c71c455cd9865de9b9360e1f43456be5951032d7ac1a66 AS build
+FROM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-fund --no-audit
@@ -30,7 +30,7 @@ RUN npm run build && npm run build:generator
 # plain `docker build .` (make docker-build, docker.yml) still produces the
 # serving image. Build this one with `--target report`. The syft stage below
 # is ordered for the same reason.
-FROM node:26-alpine@sha256:e88a35be04478413b7c71c455cd9865de9b9360e1f43456be5951032d7ac1a66 AS report
+FROM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS report
 # The template the generator embeds into; overridable with --template.
 ENV BLITSBOM_TEMPLATE=/opt/blitsbom/index.html
 COPY --from=build /app/dist/index.html /opt/blitsbom/index.html
