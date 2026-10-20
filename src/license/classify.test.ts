@@ -191,6 +191,16 @@ describe('classifyLicense — URLs', () => {
         value: 'https://glassfish.dev.java.net/public/CDDLv1.0.html',
       }),
     ).toBe('copyleft');
+    expect(classifyLicense({ kind: 'name', value: 'https://glassfish.java.net' })).toBe(
+      'copyleft',
+    );
+    // The pattern names a host, so a longer hostname must not match it.
+    for (const value of [
+      'https://glassfish.java.net.evil.com/CDDL',
+      'https://glassfish.dev.java.net-evil.com/CDDL',
+    ]) {
+      expect(classifyLicense({ kind: 'name', value })).toBe('unrecognized');
+    }
   });
 
   it('recognizes the current opensource.org/license/<id> URL form (#261)', () => {
@@ -241,6 +251,21 @@ describe('classifyLicense — URLs', () => {
         value: 'https://evilapache.org/licenses/LICENSE-2.0',
       }),
     ).toBe('unrecognized');
+    // `//` alone is no boundary: it can appear later in another host's URL.
+    for (const value of [
+      'https://evil.com/?u=//apache.org/licenses/LICENSE-2.0',
+      'https://evil.com/x//www.gnu.org/licenses/gpl',
+      'evil.com//www.apache.org/licenses/LICENSE-2.0',
+    ]) {
+      expect(classifyLicense({ kind: 'name', value })).toBe('unrecognized');
+    }
+    // A URL wrapped in text, as freemarker declares it, still counts.
+    for (const value of [
+      'Apache License, Version 2.0; see: http://www.apache.org/licenses/LICENSE-2.0.txt',
+      '//www.apache.org/licenses/LICENSE-2.0',
+    ]) {
+      expect(classifyLicense({ kind: 'name', value })).toBe('permissive');
+    }
   });
 });
 
