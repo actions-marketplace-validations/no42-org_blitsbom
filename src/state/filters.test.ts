@@ -14,6 +14,8 @@ import {
   ORIGINATOR_UNKNOWN,
   isLicensable,
   countExcluded,
+  hasActiveFilters,
+  countHiddenFiles,
 } from './filters';
 import type { Component } from '../types';
 
@@ -297,6 +299,42 @@ describe('file components (syft image SBOMs, #306)', () => {
     expect(applyFilters(alpine, filters).map((c) => c.type)).toEqual([
       'operating-system',
     ]);
+  });
+
+  it('hides unlicensed files by default', () => {
+    expect(applyFilters(alpine, emptyFilters())).toHaveLength(15);
+  });
+
+  it('lists every component with showFiles', () => {
+    const filters = { ...emptyFilters(), showFiles: true };
+    expect(applyFilters(alpine, filters)).toHaveLength(92);
+  });
+
+  it('always lists a file that declares a license', () => {
+    const licensedFile = lib('/usr/bin/script', {
+      type: 'file',
+      licenses: [{ kind: 'id', value: 'MIT' }],
+    });
+    expect(
+      applyFilters([...alpine, licensedFile], emptyFilters()).map((c) => c.name),
+    ).toContain('/usr/bin/script');
+  });
+
+  it('lists a file that carries a vulnerability', () => {
+    const vulnFile = lib('/usr/lib/libz.so', {
+      type: 'file',
+      licenses: [],
+      vulnerabilities: [{ id: 'CVE-1', source: 'NVD', severity: 'high' }],
+    });
+    const all = [...alpine, vulnFile];
+    expect(applyFilters(all, emptyFilters())).toHaveLength(16);
+    const high = { ...emptyFilters(), severities: new Set(['high' as const]) };
+    expect(applyFilters(all, high).map((c) => c.name)).toEqual(['/usr/lib/libz.so']);
+    expect(countHiddenFiles(all)).toBe(77);
+  });
+
+  it('showFiles is not an active filter', () => {
+    expect(hasActiveFilters({ ...emptyFilters(), showFiles: true })).toBe(false);
   });
 
   it('type=file still lists every file', () => {
