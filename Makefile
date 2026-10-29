@@ -1,4 +1,4 @@
-.PHONY: help install dev build build-generator report sbom verify test lint format clean preview dist-zip size-check purity-check marketplace-check smoke e2e docker-build docker-run ci
+.PHONY: help install dev build build-generator report sbom license-table verify test lint format clean preview dist-zip size-check purity-check marketplace-check release-tag smoke e2e docker-build docker-run ci
 
 # Every release artifact is named `blitsbom-<version>` plus an extension, so a
 # file downloaded from a release says which product and which version it came
@@ -41,7 +41,9 @@ help:
 	@echo "  preview         Preview the production build"
 	@echo "  size-check      Fail if gzipped JS exceeds 60 KB"
 	@echo "  purity-check    Fail if any forbidden network call appears in src/"
+	@echo "  license-table   Regenerate src/license/scancode.ts from ScanCode LicenseDB [SOURCE=url-or-path]"
 	@echo "  marketplace-check Fail if action.yml or the README's version examples would break the listing"
+	@echo "  release-tag     Tag and push the merged release bump: make release-tag VERSION=X.Y.Z"
 	@echo "  smoke           Run the file:// headless-Chromium smoke test"
 	@echo "  e2e             Full file:// end-to-end UX check (upload, filter, export)"
 	@echo "  dist-zip        Build and zip dist/ [OUT=blitsbom-<version>.zip]"
@@ -95,8 +97,17 @@ size-check:
 purity-check:
 	npm run purity-check
 
+license-table:
+	npm run license-table -- $(SOURCE)
+
 marketplace-check:
 	npm run marketplace-check
+
+# Refuses unless HEAD is origin/main, is the `chore(release): vX.Y.Z` commit,
+# and package.json there says X.Y.Z. Four tags in a row went onto a Dependabot
+# merge before this existed (#265).
+release-tag:
+	node scripts/release-tag.mjs "$(VERSION)"
 
 smoke:
 	npm run smoke

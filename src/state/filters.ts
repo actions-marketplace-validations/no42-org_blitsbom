@@ -1,3 +1,7 @@
+/*
+ * Copyright 2026 Ronny Trommer <ronny@no42.org>
+ * SPDX-License-Identifier: MIT
+ */
 import type {
   Component,
   License,
@@ -19,6 +23,9 @@ export interface FilterState {
   /** Severity filter values. `none` is a pseudo-severity that matches
    * components with zero live (visible-by-default) vulnerabilities. */
   severities: ReadonlySet<Severity>;
+  /** Show unlicensed `file` components. A view preference, not a facet:
+   * it does not count as an active filter. */
+  showFiles: boolean;
 }
 
 export function emptyFilters(): FilterState {
@@ -30,6 +37,7 @@ export function emptyFilters(): FilterState {
     categories: new Set(),
     originators: new Set(),
     severities: new Set(),
+    showFiles: false,
   };
 }
 
@@ -64,7 +72,13 @@ export function applyFilters(
   showSuppressed = false,
 ): Component[] {
   const q = filters.query.trim().toLowerCase();
+  const byLicensing = filters.categories.size > 0 || filters.originators.size > 0;
+  // Selecting the `file` type shows them, or that facet would be empty.
+  const hideFiles = !filters.showFiles && !filters.types.has('file');
   return components.filter((c) => {
+    if (hideFiles && isHiddenFile(c)) return false;
+    // Keeps a donut slice's count equal to the rows its filter produces.
+    if (byLicensing && !isLicensable(c)) return false;
     if (filters.licenses.size > 0) {
       const matched = c.licenses.some((l) => filters.licenses.has(l.value));
       if (!matched) return false;
@@ -114,6 +128,66 @@ function matchesSeverity(
 }
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+
+/** An unlicensed `file` component: syft lists every package-owned file of
+ * a container image this way, with hashes but no license or supplier. */
+function isUnlicensedFile(c: Component): boolean {
+  return c.type === 'file' && c.licenses.length === 0;
+}
+
+/** An unlicensed file that the table hides unless files are shown. A file
+ * with a VEX vulnerability stays listed, so every vulnerability the
+ * severity chart counts has a row. (#327) */
+function isHiddenFile(c: Component): boolean {
+  return isUnlicensedFile(c) && c.vulnerabilities.length === 0;
+}
+
+export function countHiddenFiles(components: readonly Component[]): number {
+  let n = 0;
+  for (const c of components) if (isHiddenFile(c)) n += 1;
+  return n;
+}
+
+/** An RPM signing key. RHEL images carry them as `gpg-pubkey` packages
+ * with the license `pubkey`; they are keys, not software. (#307) */
+function isSigningKey(c: Component): boolean {
+  return c.name === 'gpg-pubkey' && (c.purl?.startsWith('pkg:rpm/') ?? false);
+}
+
+/**
+ * False for unlicensed files and RPM signing keys. The license and
+ * originator charts skip them so they don't read as thousands of
+ * Undeclared / Unknown entries (#306). They stay in the table.
+ */
+export function isLicensable(c: Component): boolean {
+  return !isUnlicensedFile(c) && !isSigningKey(c);
+}
+
+export interface ExcludedCounts {
+  files: number;
+  keys: number;
+}
+
+export function countExcluded(components: readonly Component[]): ExcludedCounts {
+  const out = { files: 0, keys: 0 };
+  for (const c of components) {
+    if (isUnlicensedFile(c)) out.files += 1;
+    else if (isSigningKey(c)) out.keys += 1;
+  }
+  return out;
+}
+
+/** The charts' note on what they leave out, or null when nothing is. */
+export function formatExcludedNote({ files, keys }: ExcludedCounts): string | null {
+  const parts: string[] = [];
+  if (files > 0) {
+    parts.push(`${files.toLocaleString()} file ${files === 1 ? 'component' : 'components'}`);
+  }
+  if (keys > 0) {
+    parts.push(`${keys.toLocaleString()} signing ${keys === 1 ? 'key' : 'keys'}`);
+  }
+  return parts.length > 0 ? `${parts.join(' and ')} not counted.` : null;
+}
 
 export const ORIGINATOR_OTHER = '__originator_other__';
 export const ORIGINATOR_UNKNOWN = '__originator_unknown__';
@@ -188,13 +262,15 @@ export interface CategoryBreakdownEntry {
 
 /**
  * Count components per license category. Each component is classified by
- * its first license (see classifyComponent). Empty categories are omitted.
+ * its first license (see classifyComponent). Empty categories are omitted,
+ * and so are non-licensable components (see isLicensable).
  */
 export function computeCategoryBreakdown(
   components: readonly Component[],
 ): CategoryBreakdownEntry[] {
   const counts = new Map<LicenseCategory, number>();
   for (const c of components) {
+    if (!isLicensable(c)) continue;
     const cat = classifyComponent(c.licenses);
     counts.set(cat, (counts.get(cat) ?? 0) + 1);
   }
@@ -212,7 +288,9 @@ export function licensesInCategory(
   category: LicenseCategory,
 ): LicenseBreakdownEntry[] {
   const entries = computeLicenseBreakdown(
-    components.filter((c) => classifyComponent(c.licenses) === category),
+    components.filter(
+      (c) => isLicensable(c) && classifyComponent(c.licenses) === category,
+    ),
   );
   return entries;
 }
@@ -252,6 +330,7 @@ export function computeOriginatorBreakdown(
   const counts = new Map<string, number>();
   let unknown = 0;
   for (const c of components) {
+    if (!isLicensable(c)) continue;
     if (c.originator === null) {
       unknown += 1;
     } else {

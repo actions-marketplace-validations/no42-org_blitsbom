@@ -1,3 +1,7 @@
+<!--
+  Copyright 2026 Ronny Trommer <ronny@no42.org>
+  SPDX-License-Identifier: MIT
+-->
 <script lang="ts">
   import type { CategoryBreakdownEntry } from '../state/filters';
   import { CATEGORY_METADATA } from '../license/classify';
@@ -5,9 +9,11 @@
 
   interface Props {
     breakdown: CategoryBreakdownEntry[];
+    /** What the chart leaves out (see isLicensable), or null. */
+    excludedNote?: string | null;
   }
 
-  let { breakdown }: Props = $props();
+  let { breakdown, excludedNote = null }: Props = $props();
 
   // Pin bar order to CATEGORY_METADATA so the chart stays stable as
   // filters change. Drop empty buckets so we don't render zero-width bars.
@@ -31,7 +37,7 @@
   }
 </script>
 
-{#if total > 0}
+{#if total > 0 || excludedNote}
   <section class="chart" aria-label="License breakdown by category">
     <h2 class="chart__heading">
       Licenses by Category
@@ -63,6 +69,9 @@
         </li>
       {/each}
     </ul>
+    {#if excludedNote}
+      <p class="chart__note">{excludedNote}</p>
+    {/if}
   </section>
 {/if}
 
@@ -75,6 +84,12 @@
     background: var(--color-surface);
     border: 1px solid var(--color-ink-200);
     border-radius: 12px;
+  }
+  .chart__note {
+    margin: 0;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    color: var(--color-ink-500);
   }
   .chart__heading {
     margin: 0;

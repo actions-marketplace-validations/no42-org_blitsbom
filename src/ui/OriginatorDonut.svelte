@@ -1,15 +1,22 @@
+<!--
+  Copyright 2026 Ronny Trommer <ronny@no42.org>
+  SPDX-License-Identifier: MIT
+-->
 <script lang="ts">
   import type { OriginatorBreakdownEntry } from '../state/filters';
   import { store } from '../state/store.svelte';
 
   interface Props {
     breakdown: OriginatorBreakdownEntry[];
+    /** What the chart leaves out (see isLicensable), or null. */
+    excludedNote?: string | null;
     heading?: string;
     ariaLabel?: string;
   }
 
   let {
     breakdown,
+    excludedNote = null,
     heading = 'Licenses by Originator',
     ariaLabel,
   }: Props = $props();
@@ -59,7 +66,7 @@
   }
 </script>
 
-{#if total > 0}
+{#if total > 0 || excludedNote}
   <section class="chart" aria-label={ariaLabel ?? heading}>
     <h2 class="chart__heading">
       {heading}
@@ -96,6 +103,9 @@
       Where the SBOM declares no originator, the package namespace is used
       instead (for example a Maven groupId).
     </p>
+    {#if excludedNote}
+      <p class="chart__note">{excludedNote}</p>
+    {/if}
   </section>
 {/if}
 

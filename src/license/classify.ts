@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Ronny Trommer <ronny@no42.org>
+ * SPDX-License-Identifier: MIT
+ */
+
 // SPDX-id → license category lookup.
 //
 // AUTHORITY: Free Software Foundation license list at
@@ -11,6 +16,13 @@
 // split for a viewer audience that includes legal/procurement, not just
 // engineers.
 //
+// SECOND AUTHORITY: ScanCode LicenseDB at
+//   https://scancode-licensedb.aboutcode.org/
+// The FSF does not classify most of the SPDX License List (X11, HPND, curl,
+// the GFDL family, ...). For an SPDX id that TABLE does not hold, the
+// category comes from ScanCode, via the generated ./scancode.ts. A TABLE
+// entry always wins. (#307)
+//
 // Beyond the canonical SPDX-id lookup (TABLE), this module also handles the
 // messy real-world inputs found in CycloneDX and SPDX SBOMs:
 //   - free-form name aliases (GPLv2+, ASL 2.0, "Apache License Version 2.0")
@@ -19,6 +31,7 @@
 //   - OpenNMS-tooling artifacts ("BSD-3-Clause;link=https://…")
 
 import type { License, LicenseCategory } from '../types';
+import { SCANCODE_IDS } from './scancode';
 
 interface CategoryMeta {
   id: LicenseCategory;
@@ -124,6 +137,9 @@ const TABLE: Record<string, LicenseCategory> = {
   'CDDL-1.1': 'copyleft',
   'EUPL-1.1': 'copyleft',
   'EUPL-1.2': 'copyleft',
+  // Deprecated SPDX id, kept as the canonical key for any GPL carrying the
+  // Classpath exception: linking code is not bound by the GPL. (#261)
+  'GPL-2.0-with-classpath-exception': 'copyleft',
 
   // Strong / project-level copyleft.
   'GPL-2.0': 'strong-copyleft',
@@ -136,6 +152,17 @@ const TABLE: Record<string, LicenseCategory> = {
   'AGPL-3.0-only': 'strong-copyleft',
   'AGPL-3.0-or-later': 'strong-copyleft',
 };
+
+// SPDX ids are case-insensitive, so both tables are looked up lowercased.
+const TABLE_LC = new Map(
+  Object.entries(TABLE).map(([id, cat]) => [id.toLowerCase(), cat]),
+);
+const SCANCODE = new Map<string, LicenseCategory>();
+for (const [cat, ids] of Object.entries(SCANCODE_IDS)) {
+  for (const id of ids.split(' ')) {
+    SCANCODE.set(id.toLowerCase(), cat as LicenseCategory);
+  }
+}
 
 /**
  * Severity ordering used for compound expression resolution.
@@ -169,6 +196,7 @@ const NAME_ALIASES: Record<string, string> = {
   'apache 2.0': 'Apache-2.0',
   'apache-2': 'Apache-2.0',
   'apache license': 'Apache-2.0',
+  'apache license 2.0': 'Apache-2.0',
   'apache license v2.0': 'Apache-2.0',
   'apache license version 2.0': 'Apache-2.0',
   'apache license, version 2.0': 'Apache-2.0',
@@ -185,6 +213,7 @@ const NAME_ALIASES: Record<string, string> = {
   'gplv3+': 'GPL-3.0-or-later',
   agplv3: 'AGPL-3.0',
   'agplv3+': 'AGPL-3.0-or-later',
+  'gpl2-w--cpe': 'GPL-2.0-with-classpath-exception', // syft LicenseRef slug
 
   // LGPL family
   lgpl: 'LGPL-3.0-or-later',
@@ -209,20 +238,30 @@ const NAME_ALIASES: Record<string, string> = {
   // SPDX id directly.
   bsd: 'BSD-3-Clause',
   'bsd license': 'BSD-3-Clause',
+  'revised bsd': 'BSD-3-Clause',
+  'the bsd license': 'BSD-3-Clause',
 
   // Eclipse
   'eclipse public license': 'EPL-2.0',
   'eclipse public license 2.0': 'EPL-2.0',
   'eclipse public license, version 2.0': 'EPL-2.0',
+  'eclipse-public-license---v-2.0': 'EPL-2.0', // syft LicenseRef slug
+  // EDL 1.0 is the BSD-3-Clause text under another name.
+  'edl-1.0': 'BSD-3-Clause',
+  'eclipse distribution license - v 1.0': 'BSD-3-Clause',
+  'eclipse-distribution-license---v-1.0': 'BSD-3-Clause', // syft LicenseRef slug
 
   // CDDL
   cddl: 'CDDL-1.0',
   'cddl 1.0': 'CDDL-1.0',
+  'cddl 1.1': 'CDDL-1.1',
   'common development and distribution license': 'CDDL-1.0',
 
   // Misc
   python: 'Python-2.0',
   'public domain': 'CC0-1.0',
+  // Fedora's ref for content that has no copyright; not in ScanCode. (#307)
+  'licenseref-not-copyrightable': 'CC0-1.0',
   'the mit license': 'MIT',
   'mit license': 'MIT',
 };
@@ -233,34 +272,110 @@ const NAME_ALIASES: Record<string, string> = {
  * patterns should appear before generic ones (e.g., gnu.org/licenses/lgpl-3.0
  * before gnu.org/licenses/lgpl).
  */
-// Host-anchored patterns: each entry requires `//` (scheme separator) plus an
-// optional subdomain chain before the canonical host. This blocks
-// prefix-injection inputs like `evil.com/apache.org/licenses/LICENSE-2.0`
-// from being mis-classified.
+// Host-anchored patterns: each entry requires the URL to start with an
+// http(s) or protocol-relative `//`, then an optional subdomain chain, then
+// the canonical host. This blocks prefix-injection inputs like
+// `evil.com/apache.org/licenses/LICENSE-2.0` and `evil.com/?u=//apache.org/…`
+// from being mis-classified. They are tested against URL_TOKEN matches,
+// never against the whole value.
+const URL_TOKEN = /(?<!\S)(?:https?:)?\/\/\S+/g;
 const URL_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\/\/(?:[a-z0-9-]+\.)*apache\.org\/licenses\/LICENSE-2\.0/i, 'Apache-2.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/MIT/i, 'MIT'],
-  [/\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/BSD-3-Clause/i, 'BSD-3-Clause'],
-  [/\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/BSD-2-Clause/i, 'BSD-2-Clause'],
-  [/\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/ISC/i, 'ISC'],
-  [/\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/Apache-2\.0/i, 'Apache-2.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/agpl/i, 'AGPL-3.0-or-later'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/lgpl-3\.0/i, 'LGPL-3.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/lgpl-2\.1/i, 'LGPL-2.1'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/lgpl/i, 'LGPL-3.0-or-later'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/gpl-3\.0/i, 'GPL-3.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/gpl-2\.0/i, 'GPL-2.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/gpl/i, 'GPL-3.0-or-later'],
-  [/\/\/(?:[a-z0-9-]+\.)*mozilla\.org\/MPL\/2\.0/i, 'MPL-2.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*mozilla\.org\/MPL\/1\.1/i, 'MPL-1.1'],
-  [/\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/legal\/epl-2\.0/i, 'EPL-2.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/legal\/epl-v10/i, 'EPL-1.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/legal\/epl/i, 'EPL-2.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/org\/documents\/edl-v10/i, 'BSD-3-Clause'],
-  [/\/\/(?:[a-z0-9-]+\.)*glassfish\.dev\.java\.net/i, 'CDDL-1.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*glassfish\.java\.net/i, 'CDDL-1.0'],
-  [/\/\/(?:[a-z0-9-]+\.)*sun\.com\/cddl/i, 'CDDL-1.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*apache\.org\/licenses\/LICENSE-2\.0/i, 'Apache-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/MIT/i, 'MIT'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/BSD-3-Clause/i, 'BSD-3-Clause'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/BSD-2-Clause/i, 'BSD-2-Clause'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/ISC/i, 'ISC'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/Apache-2\.0/i, 'Apache-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/apache2\.0\.php/i, 'Apache-2.0'],
+  // OSI's legacy page, which redirects to BSD-2-Clause.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/bsd-license\.php/i, 'BSD-2-Clause'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*creativecommons\.org\/publicdomain\/zero\/1\.0/i, 'CC0-1.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*repository\.jboss\.org\/licenses\/apache-2\.0/i, 'Apache-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*repository\.jboss\.org\/licenses\/cddl/i, 'CDDL-1.0'],
+  // "ce" and "cp" both name the Classpath exception.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*repository\.jboss\.org\/licenses\/gpl-2\.0-ce/i, 'GPL-2.0-with-classpath-exception'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/license\/secondary-gpl-2\.0-cp/i, 'GPL-2.0-with-classpath-exception'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/software\/classpath\/license/i, 'GPL-2.0-with-classpath-exception'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/agpl/i, 'AGPL-3.0-or-later'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/lgpl-3\.0/i, 'LGPL-3.0'],
+  // GNU keeps the 2.x texts under old-licenses/. Only the versioned patterns
+  // accept it: the bare gpl/lgpl catch-alls would map old-licenses/gpl-1.0
+  // to GPL-3.0-or-later.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/(?:old-licenses\/)?lgpl-2\.1/i, 'LGPL-2.1'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/(?:old-licenses\/)?lgpl-2\.0/i, 'LGPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/lgpl/i, 'LGPL-3.0-or-later'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/gpl-3\.0/i, 'GPL-3.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/(?:old-licenses\/)?gpl-2\.0/i, 'GPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/licenses\/gpl/i, 'GPL-3.0-or-later'],
+  // gnu.org/copyleft/ pages describe the current GPL and LGPL.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/copyleft\/lesser/i, 'LGPL-3.0-or-later'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*gnu\.org\/copyleft\/gpl/i, 'GPL-3.0-or-later'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*mozilla\.org\/MPL\/2\.0/i, 'MPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*mozilla\.org\/MPL\/1\.1/i, 'MPL-1.1'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*mozilla\.org\/MPL\/MPL-1\.1/i, 'MPL-1.1'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/legal\/epl-2\.0/i, 'EPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/org\/documents\/epl-2\.0/i, 'EPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/org\/documents\/epl-v10/i, 'EPL-1.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/license\/epl-2\.0/i, 'EPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/legal\/epl-v10/i, 'EPL-1.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/legal\/epl/i, 'EPL-2.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*eclipse\.org\/org\/documents\/edl-v10/i, 'BSD-3-Clause'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*glassfish\.dev\.java\.net(?:\/|$)/i, 'CDDL-1.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*glassfish\.java\.net(?:\/|$)/i, 'CDDL-1.0'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*sun\.com\/cddl/i, 'CDDL-1.0'],
+  // CDDL-1.1 OR GPL-2.0 with the Classpath exception. Both options are
+  // copyleft, so the CDDL id stands for the pair.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*oss\.oracle\.com\/licenses\/CDDL\+GPL-1\.1/i, 'CDDL-1.1'],
+  // Project license pages, each checked against the text it links. The
+  // path names the repository and the exact file, so another project on
+  // the same host, or another file, stays unrecognized. GitHub serves a
+  // file under both blob/ and raw/. (#322)
+  // javax.activation, javax.annotation-api: CDDL-1.1 OR GPL-2.0 with the
+  // Classpath exception, as for Oracle above.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*github\.com\/javaee\/activation\/(?:blob|raw)\/master\/LICENSE\.txt(?:[?#]|$)/i, 'CDDL-1.1'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*github\.com\/javaee\/javax\.annotation\/(?:blob|raw)\/master\/LICENSE(?:[?#]|$)/i, 'CDDL-1.1'],
+  // JSON-java: Public Domain since 2022. Older tags hold the JSON License,
+  // so only master matches.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*github\.com\/stleary\/JSON-java\/(?:blob|raw)\/master\/LICENSE(?:[?#]|$)/i, 'CC0-1.0'],
+  // jsoup, jedis: MIT.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*jsoup\.org\/license\/?(?:[?#]|$)/i, 'MIT'],
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*github\.com\/xetorthio\/jedis\/(?:blob|raw)\/master\/LICENSE\.txt(?:[?#]|$)/i, 'MIT'],
+  // jaxen: BSD-3-Clause.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*raw\.githubusercontent\.com\/jaxen-xpath\/jaxen\/master\/LICENSE\.txt(?:[?#]|$)/i, 'BSD-3-Clause'],
+  // jsch: LICENSE.txt and LICENSE.JZlib.txt are BSD-3-Clause,
+  // LICENSE.jBCrypt.txt is ISC. All permissive.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*github\.com\/mwiede\/jsch\/(?:blob|raw)\/master\/LICENSE(?:\.JZlib|\.jBCrypt)?\.txt(?:[?#]|$)/i, 'BSD-3-Clause'],
+  // Vaadin ConfirmDialog add-on: a copy of the Apache License 2.0.
+  [/^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*apache\.org\/Vaadin-ConfirmDialog\/LICENSE-2\.0\.txt(?:[?#]|$)/i, 'Apache-2.0'],
 ];
+
+/** The path segment of an OSI license page, host-anchored like URL_PATTERNS. */
+const OSI_ID = /^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*opensource\.org\/licenses\/([^/?#]+)/i;
+
+/** The first OSGi attribute or directive of a header entry, and everything
+ * after it. */
+const ATTRIBUTE = /;\s*[A-Za-z][\w.-]*\s*:?=.*$/s;
+
+/**
+ * Split an OSGi `Bundle-License` list at commas outside double quotes. A
+ * `description="Apache License, Version 2.0"` attribute holds a comma that
+ * is not a separator.
+ */
+function splitEntries(value: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '"') quoted = !quoted;
+    else if (ch === ',' && !quoted) {
+      out.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out.map((e) => e.trim()).filter(Boolean);
+}
 
 /**
  * Strip OpenNMS / CycloneDX tooling artifacts and surrounding quotes,
@@ -269,18 +384,25 @@ const URL_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 function cleanValue(raw: string): string {
   if (!raw) return '';
   let v = raw.trim();
-  // Strip OpenNMS ";link=…" suffix.
-  v = v.replace(/;\s*link\s*=.*$/i, '').trim();
+  // Strip OSGi attributes and directives (";link=…", ";description=…",
+  // ";name:=…"). OpenNMS tooling emits the ";link=" form too. (#308)
+  v = v.replace(ATTRIBUTE, '').trim();
   // Strip surrounding quotes.
   v = v.replace(/^["']|["']$/g, '').trim();
-  // Strip "with <exception>" tail — we don't differentiate by exception in v1.
+  // The Classpath exception moves a GPL down to copyleft, so it must be
+  // recognized before the exception tail is stripped below. (#261)
+  if (/classpath/i.test(v) && /\bgpl|general public license/i.test(v)) {
+    return 'GPL-2.0-with-classpath-exception';
+  }
+  // Strip any other "with <exception>" tail; those don't change the category.
   v = v.replace(/\s+with\s+.*$/i, '').trim();
   // Strip a "LicenseRef-" prefix when followed by a recognizable SPDX id;
   // some tools encode the actual id inside the ref name.
   const refMatch = v.match(/^LicenseRef-+(.+)$/);
   if (refMatch && refMatch[1]) {
     const inner = refMatch[1].trim();
-    if (TABLE[inner] || NAME_ALIASES[inner.toLowerCase()]) {
+    const lower = inner.toLowerCase();
+    if (TABLE_LC.has(lower) || SCANCODE.has(lower) || NAME_ALIASES[lower]) {
       v = inner;
     }
   }
@@ -297,16 +419,35 @@ function lookupToken(rawToken: string): LicenseCategory | null {
   if (!cleaned) return null;
   if (cleaned === 'NOASSERTION') return 'undeclared';
 
-  // Direct SPDX id.
-  if (TABLE[cleaned]) return TABLE[cleaned]!;
+  // Direct SPDX id, FSF table first.
+  const lower = cleaned.toLowerCase();
+  const fsf = TABLE_LC.get(lower);
+  if (fsf) return fsf;
 
-  // Alias (case-insensitive).
-  const aliasId = NAME_ALIASES[cleaned.toLowerCase()];
-  if (aliasId && TABLE[aliasId]) return TABLE[aliasId]!;
+  // Alias (case-insensitive). Retry without a leading "The" and with the
+  // British "licence", both common in Maven parent POMs. (#321)
+  const folded = lower.replace(/^the\s+/, '').replace(/\blicence\b/g, 'license');
+  const aliasId = (NAME_ALIASES[lower] ?? NAME_ALIASES[folded])?.toLowerCase();
+  const aliasCat = aliasId && (TABLE_LC.get(aliasId) ?? SCANCODE.get(aliasId));
+  if (aliasCat) return aliasCat;
 
-  // URL pattern.
-  for (const [re, id] of URL_PATTERNS) {
-    if (re.test(cleaned)) return TABLE[id] ?? 'unrecognized';
+  // Any other SPDX id, per ScanCode.
+  const scancode = SCANCODE.get(lower);
+  if (scancode) return scancode;
+
+  // URL pattern. OSI moved from /licenses/<id> to /license/<id>; fold the
+  // new form onto the old so the host-anchored patterns cover both. (#261)
+  // Each URL token is matched on its own, so a value may wrap the URL in
+  // text ("Apache License, Version 2.0; see: http://…").
+  const text = cleaned.replace('opensource.org/license/', 'opensource.org/licenses/');
+  for (const url of text.match(URL_TOKEN) ?? []) {
+    for (const [re, id] of URL_PATTERNS) {
+      if (re.test(url)) return TABLE[id] ?? 'unrecognized';
+    }
+    // Any other OSI page is named by its SPDX id. (#321)
+    const osiId = url.match(OSI_ID)?.[1]?.toLowerCase();
+    const osiCat = osiId && (TABLE_LC.get(osiId) ?? SCANCODE.get(osiId));
+    if (osiCat) return osiCat;
   }
 
   // Bare "Public Domain"-style names.
@@ -353,6 +494,16 @@ function classifyExpression(expr: string): LicenseCategory {
   return lookupToken(clean) ?? 'unrecognized';
 }
 
+/** One list entry, without the url fallback. Null when not recognized. */
+function classifyEntry(entry: string): LicenseCategory | null {
+  const cleaned = cleanValue(entry);
+  if (/\s+(AND|OR)\s+/i.test(cleaned)) {
+    const cat = classifyExpression(cleaned);
+    return cat === 'unrecognized' ? null : cat;
+  }
+  return lookupToken(cleaned);
+}
+
 /**
  * Classify a license into one of seven categories.
  *
@@ -373,14 +524,37 @@ export function classifyLicense(
     return classifyExpression(value);
   }
 
+  // A license list (OSGi Bundle-License, or a Maven <licenses> list joined
+  // by syft): the entries are alternatives, so the least restrictive one
+  // decides. The Maven model: "If multiple licenses are listed, it is
+  // assumed that the user can select any of them, not that they must
+  // accept all." Split only when every entry is recognized on its own; a
+  // comma inside a name ("Apache License, Version 2.0") leaves a fragment
+  // that is not, and the value is then classified whole. (#308)
+  const entries = splitEntries(value);
+  if (entries.length > 1) {
+    const cats = entries.map(classifyEntry);
+    if (cats.every((c): c is LicenseCategory => c !== null)) {
+      return minCategory(cats);
+    }
+  }
+
   // kind: 'id' or 'name'. Some "id" values from CycloneDX aren't real SPDX
   // ids (e.g., "GPLv2+"), so we run both kinds through the same normalizer.
   // If the cleaned value still contains AND/OR, treat it as an expression.
   const cleaned = cleanValue(value);
   if (/\s+(AND|OR)\s+/i.test(cleaned)) {
-    return classifyExpression(cleaned);
+    const cat = classifyExpression(cleaned);
+    // A name like "... v2.1 or later" only looks like an expression. (#321)
+    if (cat !== 'unrecognized' || !license.url) return cat;
+    return lookupToken(license.url) ?? cat;
   }
-  return lookupToken(cleaned) ?? 'unrecognized';
+  // Fall back to the license URL when the name alone is not enough. (#261)
+  return (
+    lookupToken(cleaned) ??
+    (license.url ? lookupToken(license.url) : null) ??
+    'unrecognized'
+  );
 }
 
 /**

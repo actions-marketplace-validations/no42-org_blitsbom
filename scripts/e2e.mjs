@@ -34,6 +34,15 @@ const FIXTURES = [
     expectsPermissive: true,
   },
   {
+    // syft 1.55 scan of the alpine:3.20 image: 14 packages, 77 package-owned
+    // `file` components and the OS component (#306). The files are hidden
+    // until "Show files" is on.
+    name: 'CycloneDX image (syft, alpine:3.20)',
+    file: join(SYFT_SAMPLES, 'alpine-3.20-cdx-1.7.json'),
+    expectedCount: 15,
+    expectsPermissive: true,
+  },
+  {
     name: 'SPDX synthetic',
     file: join(SAMPLES, 'spdx-synthetic.json'),
     expectedCount: 3,
@@ -190,6 +199,80 @@ for (const fixture of FIXTURES) {
   }
   console.log(`  CSV: ${csv.length} bytes, ${lineCount} non-blank lines`);
 }
+
+// File components (#306): the license and originator charts leave out the
+// 77 `file` components and say so; Undeclared is only the OS component, and
+// its filter yields as many rows as the bar shows.
+console.log(`\n--- File components (syft, alpine:3.20) ---`);
+await page.goto(url, { waitUntil: 'load' });
+await page.waitForSelector('.drop-zone');
+await page.setInputFiles(
+  'input[type=file]',
+  join(SYFT_SAMPLES, 'alpine-3.20-cdx-1.7.json'),
+);
+await page.waitForSelector('.summary-header', { timeout: 60_000 });
+const fileNotes = await page
+  .locator('.chart__note', { hasText: '77 file components not counted.' })
+  .count();
+if (fileNotes !== 2) {
+  fail(`file components: expected 2 exclusion notes, got ${fileNotes}`);
+}
+const undeclaredBar = page.locator('.bar', { hasText: 'Undeclared' }).first();
+const undeclaredCount = Number(
+  (await undeclaredBar.locator('.bar__count').textContent())?.trim(),
+);
+if (undeclaredCount !== 1) {
+  fail(`file components: expected Undeclared = 1, got ${undeclaredCount}`);
+}
+await undeclaredBar.click();
+await page.waitForFunction(() => location.search.includes('category=undeclared'));
+// The URL updates before the table re-renders, so wait for the row count.
+await page
+  .waitForFunction(
+    (n) => document.querySelectorAll('tbody tr').length === n,
+    undeclaredCount,
+    { timeout: 10_000 },
+  )
+  .catch(() => {});
+const undeclaredRows = await page.locator('tbody tr').count();
+if (undeclaredRows !== undeclaredCount) {
+  fail(
+    `file components: Undeclared bar shows ${undeclaredCount}, filter gave ${undeclaredRows} rows`,
+  );
+}
+console.log(`  notes: ${fileNotes}, Undeclared: ${undeclaredCount} = ${undeclaredRows} rows (ok)`);
+
+// "Show files" brings the 77 hidden files back and lands in the URL; a link
+// carrying files=show opens with them shown.
+const componentCount = async () =>
+  Number(
+    (
+      await page.textContent('.summary-header__stats .stat:nth-child(1) .stat__value')
+    )?.trim(),
+  );
+await page.goto(url, { waitUntil: 'load' });
+await page.waitForSelector('.drop-zone');
+await page.setInputFiles('input[type=file]', join(SYFT_SAMPLES, 'alpine-3.20-cdx-1.7.json'));
+await page.waitForSelector('.summary-header', { timeout: 60_000 });
+if ((await componentCount()) !== 15) fail(`show files: expected 15 components hidden-by-default`);
+await page.locator('button', { hasText: 'Show files (77)' }).click();
+await page.waitForFunction(() => location.search.includes('files=show'));
+const shownCount = await componentCount();
+if (shownCount !== 92) fail(`show files: expected 92 components, got ${shownCount}`);
+await page.goto(`${url}?files=show`, { waitUntil: 'load' });
+await page.waitForSelector('.drop-zone');
+await page.setInputFiles('input[type=file]', join(SYFT_SAMPLES, 'alpine-3.20-cdx-1.7.json'));
+await page.waitForSelector('.summary-header', { timeout: 60_000 });
+const linkedCount = await componentCount();
+if (linkedCount !== 92) fail(`show files: ?files=show gave ${linkedCount} components`);
+console.log(`  hidden: 15, shown: ${shownCount}, via link: ${linkedCount} (ok)`);
+// "Load another file" drops the view state from the URL too.
+page.once('dialog', (d) => d.accept());
+await page.locator('button', { hasText: 'Load another file' }).click();
+await page.waitForSelector('.drop-zone');
+const afterReset = await page.evaluate(() => location.search);
+if (afterReset !== '') fail(`reset: URL kept "${afterReset}"`);
+console.log(`  reset clears URL (ok)`);
 
 // VEX flow — load the small CycloneDX SBOM, then drop the synthetic VEX
 // fixture. Verify: vuln tile appears, severity column populated, severity

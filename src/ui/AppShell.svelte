@@ -1,3 +1,7 @@
+<!--
+  Copyright 2026 Ronny Trommer <ronny@no42.org>
+  SPDX-License-Identifier: MIT
+-->
 <script lang="ts">
   import { onMount } from 'svelte';
   import { store } from '../state/store.svelte';
@@ -116,8 +120,14 @@
         originatorCount={store.distinctOriginatorCount}
       />
       <div class="donut-row" class:donut-row--three={store.hasVex}>
-        <LicenseDonut breakdown={store.categoryBreakdownAll} />
-        <OriginatorDonut breakdown={store.originatorBreakdownAll} />
+        <LicenseDonut
+          breakdown={store.categoryBreakdownAll}
+          excludedNote={store.excludedNote}
+        />
+        <OriginatorDonut
+          breakdown={store.originatorBreakdownAll}
+          excludedNote={store.excludedNote}
+        />
         {#if store.hasVex}
           <SeverityDonut breakdown={store.vulnsBySeverityBreakdownAll} />
         {/if}
@@ -146,18 +156,13 @@
         rel="noopener noreferrer">blitsbom</a> · runs entirely in your browser
     </span>
     <span class="page__credit">
-      Made with ❤️ in Heilbronn, Germany, Europe 🇪🇺 by
-      <!-- Site-relative links (imprint, privacy) would 404 next to a
-           standalone report file, so they are omitted in report mode. -->
-      {#if store.reportMode}
-        Ronny Trommer
-      {:else}
-        <a href="/imprint.html">Ronny Trommer</a>
-      {/if}
+      Made with ❤️ in 🇪🇺
       · <a
         href="https://ko-fi.com/indigo423"
         target="_blank"
         rel="noopener noreferrer">buy me a coffee</a>
+      <!-- Site-relative links (imprint, privacy) would 404 next to a
+           standalone report file, so they are omitted in report mode. -->
       {#if !store.reportMode}
         · <a href="/imprint.html">Imprint</a> ·
         <a href="/privacy.html">Privacy</a>

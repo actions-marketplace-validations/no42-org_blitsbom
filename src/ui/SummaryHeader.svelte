@@ -74,6 +74,19 @@
             {store.showSuppressed ? 'Hide' : 'Show'} suppressed ({store.suppressedVulnCount})
           </button>
         {/if}
+        <!-- A `file` type filter already shows them; the toggle would do nothing. -->
+        {#if store.hiddenFileCount > 0 && !store.typeFilters.has('file')}
+          <button
+            type="button"
+            class="suppressed-toggle"
+            class:suppressed-toggle--active={store.showFiles}
+            onclick={() => store.toggleFiles()}
+            aria-pressed={store.showFiles}
+            title="Toggle visibility of file components that declare no license"
+          >
+            {store.showFiles ? 'Hide' : 'Show'} files ({store.hiddenFileCount.toLocaleString()})
+          </button>
+        {/if}
       </div>
     </div>
     {#if sbom.vexMetadata}
